@@ -1,34 +1,16 @@
 env:
   map_name: "Town03"
   step_time: 0.1
-  rendering: False
-  mode: 'train'  # 'train' or 'test'
-
-train:
-  min_distance: 5
-  max_distance: 10
-  total_episodes_num: 10000
-  max_steps: 200
-  ppo_param:
-    action_dims: 5
-    batch_size: 64
-    actor_lr: 0.0001
-    value_lr: 0.001
-    eps: 0.2
-
-test:
+  rendering: True
+  max_steps: 100
 
 robot:
-  agent: "PPO_Agent"
   cameras:
     rgb: True  # RGB camera must be True
-    depth: False
+    depth: True
     semantic: True
   sensors:
     collision: True
-    lidar: False
-    gnss: False
-    imu: False
   actions:
     move_forward: 0.15  # 0.15 meters per step
     turn_left: -4.5     # -4.5 degrees per step
@@ -50,7 +32,3 @@ sensor_cfg:
     height_offset: -1.0
     distance: 0.3
     hit_radius: 0.3
-  gnss:
-    noise_stddev: 0.1
-  imu:
-    noise_stddev: 0.01
