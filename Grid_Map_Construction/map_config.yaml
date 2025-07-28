@@ -3,7 +3,7 @@ General:
 
 Town03:
   map_name: "Town03"
-  x_range: [-165, 255]
+  x_range: [-165, 265]
   y_range: [-225, 225]
   erode_kernel_size: 5
   erode_iterations: 3

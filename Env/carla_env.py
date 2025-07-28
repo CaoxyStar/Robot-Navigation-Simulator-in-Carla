@@ -2,7 +2,6 @@ import random
 import queue
 import math
 import yaml
-import json
 import argparse
 
 import numpy as np
@@ -17,7 +16,7 @@ class CarlaEnv():
         self.client.set_timeout(10.0)
         print('Loading map...')
         map_name = cfg['env']['map_name']
-        # self.client.load_world(map_name)
+        self.client.load_world(map_name)
         self.world = self.client.get_world()
         self.map = self.world.get_map()
         print('Current map: ', self.map.name)
@@ -26,7 +25,7 @@ class CarlaEnv():
         self.origin_settings = self.world.get_settings()
         self.settings = self.world.get_settings()
         self.settings.synchronous_mode = True
-        self.settings.fixed_delta_seconds = cfg['env']['step_time']     # 0.25m/step and 15deg/step, robot velocity 1.25m/s, one step is 0.2s which is double of fixed_delta_seconds
+        self.settings.fixed_delta_seconds = cfg['env']['step_time']
         self.world.apply_settings(self.settings)
 
         # Update world
@@ -49,19 +48,21 @@ class CarlaEnv():
         self.grid_map_x = grid_map_cfg[map_name]['x_range']
         self.grid_map_y = grid_map_cfg[map_name]['y_range']
 
-        # # Load dataset
-        # self.mode = cfg['env']['mode']
-        # if self.mode == 'train':
-        #     dataset_path = f'Datasets/{map_name}/{map_name}_train.json'
-        # elif self.mode == 'val':
-        #     dataset_path = f'Datasets/{map_name}/{map_name}_val.json'
-        # elif self.mode == 'test':
-        #     dataset_path = f'Datasets/{map_name}/{map_name}_test.json'
-        # else:
-        #     raise ValueError(f'Invalid mode: {self.mode}, please choose from train, val or test')
-        
-        # with open(dataset_path, 'r') as f:
-        #     self.dataset = json.load(f)
+        # Load sidewalk map for path sampling
+        sidewalk_map_path = f'Maps/{map_name}/{map_name}_sidewalk_map.npy'
+        self.sidewalk_map = np.load(sidewalk_map_path)
+        self.start_point_list = np.column_stack(np.where(self.sidewalk_map == 255))
+
+        # Load training or testing settings
+        self.mode = cfg['env']['mode']
+        if self.mode == 'train':
+            self.min_distance = int(cfg['train']['min_distance'] / self.grid_map_resolution)
+            self.max_distance = int(cfg['train']['max_distance'] / self.grid_map_resolution)
+            self.max_steps = cfg['train']['max_steps']
+        elif self.mode == 'test':
+            pass  # To Do: Implement test mode settings
+        else:
+            raise ValueError("Invalid mode. Please set mode to 'train' or 'test'.")
 
         # Initialize actor list
         self.actors = []
@@ -83,18 +84,63 @@ class CarlaEnv():
 
         # Update world
         self.world.tick()
+
+        # Sample start and end points for the robot
+        start_point_idx = random.randint(0, len(self.start_point_list) - 1)
+        start_point = self.start_point_list[start_point_idx]
+
+        inner_x_min = max(0, start_point[0] - self.min_distance)
+        inner_x_max = min(self.sidewalk_map.shape[0], start_point[0] + self.min_distance)
+        inner_y_min = max(0, start_point[1] - self.min_distance)
+        inner_y_max = min(self.sidewalk_map.shape[1], start_point[1] + self.min_distance)
+
+        sidewalk_map_copy = self.sidewalk_map.copy()
+        sidewalk_map_copy[inner_x_min:inner_x_max, inner_y_min:inner_y_max] = 0
+        sidewalk_map_copy[start_point[0], start_point[1]] = 128
+
+        outer_x_min = max(0, start_point[0] - self.max_distance)
+        outer_x_max = min(self.sidewalk_map.shape[0], start_point[0] + self.max_distance)
+        outer_y_min = max(0, start_point[1] - self.max_distance)
+        outer_y_max = min(self.sidewalk_map.shape[1], start_point[1] + self.max_distance)
+        area = sidewalk_map_copy[outer_x_min:outer_x_max, outer_y_min:outer_y_max]
+
+        start_point_transformed = np.where(area == 128)
+        end_point_list = np.column_stack(np.where(area == 255))
+        end_point_idx = random.randint(0, len(end_point_list) - 1)
+        end_point_transformed = end_point_list[end_point_idx]
+
+        delta_x = int(end_point_transformed[0] - start_point_transformed[0])
+        delta_y = int(end_point_transformed[1] - start_point_transformed[1])
+        end_point = [start_point[0] + delta_x, start_point[1] + delta_y]
+
+        self.goal_point = carla.Location(
+            x=end_point[0] * self.grid_map_resolution + self.grid_map_x[0],
+            y=end_point[1] * self.grid_map_resolution + self.grid_map_y[0],
+            z=0
+        )
+        print('Sample path successfully.')
         
-        # Initialize ego location
+        # Initialize spwan location
         spawn_point = carla.Transform()
-        spawn_point.location.x = 65
-        spawn_point.location.y = -100
+        spawn_point.location.x = start_point[0] * self.grid_map_resolution + self.grid_map_x[0]
+        spawn_point.location.y = start_point[1] * self.grid_map_resolution + self.grid_map_y[0]
         spawn_point.location.z = 0
         spawn_point.rotation.roll = 0
         spawn_point.rotation.pitch = 0
-        spawn_point.rotation.yaw = 90
+
+        delta_x = self.goal_point.x - spawn_point.location.x
+        delta_y = self.goal_point.y - spawn_point.location.y
+        theta = math.acos(delta_x / math.sqrt(delta_x**2 + delta_y**2))
+        if delta_y < 0:
+            theta = -theta
+        spawn_point.rotation.yaw = math.degrees(theta)
 
         waypoint = self.map.get_waypoint(spawn_point.location, project_to_road=True, lane_type=carla.LaneType.Driving)
         spawn_point.location.z = waypoint.transform.location.z + 1.7
+
+        # Initialize distance
+        self.distance = math.sqrt((self.goal_point.x - spawn_point.location.x) ** 2 + (self.goal_point.y - spawn_point.location.y) ** 2)
+        self.last_distance = self.distance
 
         # Spawn the robot
         robot_cameras = self.cfg['robot']['cameras']
@@ -153,14 +199,19 @@ class CarlaEnv():
         # Initialize task state
         self.collison = False
         self.out_of_map = False
+        self.task_finish = False
         self.terminated = False
         self.truncated = False
 
         # Get initial observations
         observation = self._get_obs()
+
+        # Initialize iteration state
+        self.iteration = 0
         
         # Get initial info
         info = self._get_info()
+        info['goal'] = observation['goal']
 
         # Rendering
         if self.cfg['env']['rendering']:
@@ -176,15 +227,19 @@ class CarlaEnv():
         # Get observations
         observation = self._get_obs()
 
-        # Compute reward
-        # To Do: Implement reward function based on the task
-        reward = 0.0
-
+        # Update iteration state
+        self.iteration += 1
+        
         # Update task state
         self._update_state()
 
+        # Compute reward
+        reward = self._compute_reward()
+
         # Get info
         info = self._get_info()
+        info['goal'] = observation['goal']
+        info['reward'] = reward
 
         # Rendering
         if self.cfg['env']['rendering']:
@@ -205,37 +260,62 @@ class CarlaEnv():
         wait         [0, 0, 0, 1, 0]
         stop         [0, 0, 0, 0, 1]
         '''
-        index = random.randint(0, 2)
+        index = random.randint(0, 4)
         action = np.array([0, 0, 0, 0, 0], dtype=np.int8)
         action[index] = 1
         return action
 
 
     def apply_action(self, action):
-        index = np.argmax(action)
         robot_transform = self.rgb_camera.get_transform()
-        if index == 0:
+        if action == 0:
             yaw = robot_transform.rotation.yaw
             robot_transform.location.x += self.move_forward_meter * math.cos(yaw * math.pi / 180)
             robot_transform.location.y += self.move_forward_meter * math.sin(yaw * math.pi / 180)
             waypoint = self.map.get_waypoint(robot_transform.location, project_to_road=True, lane_type=carla.LaneType.Driving)
             robot_transform.location.z = waypoint.transform.location.z + 1.7
             self.rgb_camera.set_transform(robot_transform)
-        elif index == 1:
+        elif action == 1:
             robot_transform.rotation.yaw += self.turn_left_degree
             self.rgb_camera.set_transform(robot_transform)
-        elif index == 2:
+        elif action == 2:
             robot_transform.rotation.yaw += self.turn_right_degree
             self.rgb_camera.set_transform(robot_transform)
-        elif index == 3:
+        elif action == 3:
             # Do nothing
             pass
-        elif index == 4:
-            # To Do: Stop the robot
-            pass
+        elif action == 4:
+            self.task_finish = True
+        else:
+            raise ValueError("Invalid action index. Please ensure the correct action.")
 
         self.world.tick()
-    
+
+        self.distance = math.sqrt((self.goal_point.x - robot_transform.location.x) ** 2 + (self.goal_point.y - robot_transform.location.y) ** 2)
+
+
+    def _compute_reward(self):
+        ''' Compute the reward based on the task state.
+        Returns:
+            reward: The computed reward value.
+        '''
+        reward = self.last_distance - self.distance - 0.01
+        self.last_distance = self.distance
+
+        # if self.out_of_map or self.collison:
+        #     reward -= 1
+
+        if self.task_finish:
+            if self.distance < 1:
+                reward += 10.0
+            else:
+                reward -= 1
+
+        # if self.task_finish and self.distance < 1:
+        #     reward += 10
+        
+        return reward
+
 
     def _get_obs(self):
         ''' Get observations from the environment.
@@ -277,14 +357,25 @@ class CarlaEnv():
         else:
             obs['semantic'] = None
 
+        # Compute relative coordinate
+        robot_transform = self.rgb_camera.get_transform()
+        yaw = np.deg2rad(robot_transform.rotation.yaw)
+        dx = self.goal_point.x - robot_transform.location.x
+        dy = self.goal_point.y - robot_transform.location.y
+        x_robot = dx * np.cos(yaw) + dy * np.sin(yaw)
+        y_robot = dx * np.sin(-yaw) + dy * np.cos(yaw)
+        obs['goal'] = (x_robot, y_robot)
+
         return obs
     
 
     def _get_info(self):
-        # To DO
         return {
+            'iteration': self.iteration,
+            'distance to goal': self.distance,
             'collison': self.collison,
-            'out_of_map': self.out_of_map
+            'out_of_map': self.out_of_map,
+            'task_finish': self.task_finish
         }
     
     
@@ -299,8 +390,11 @@ class CarlaEnv():
            self.grid_map[int(x), int(y)] == 0:
             self.out_of_map = True
         
-        if self.out_of_map or self.collison:
+        if self.out_of_map or self.collison or self.task_finish:
             self.terminated = True
+        
+        if self.iteration >= self.max_steps:
+            self.truncated = True
 
 
     def visualize(self, observation):

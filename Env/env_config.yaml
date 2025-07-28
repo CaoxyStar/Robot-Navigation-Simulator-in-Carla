@@ -1,19 +1,28 @@
 env:
   map_name: "Town03"
   step_time: 0.1
-  rendering: True
-  mode: 'train'  # 'train', 'val', or 'test'
+  rendering: False
+  mode: 'train'  # 'train' or 'test'
 
 train:
-
-val:
+  min_distance: 5
+  max_distance: 10
+  total_episodes_num: 10000
+  max_steps: 200
+  ppo_param:
+    action_dims: 5
+    batch_size: 64
+    actor_lr: 0.0001
+    value_lr: 0.001
+    eps: 0.2
 
 test:
 
 robot:
+  agent: "PPO_Agent"
   cameras:
     rgb: True  # RGB camera must be True
-    depth: True
+    depth: False
     semantic: True
   sensors:
     collision: True
