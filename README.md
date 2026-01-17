@@ -10,14 +10,8 @@ An interactive simulation environment built on CARLA for autonomous navigation o
 
 ## Demo
 
-<video src="demo/video_1.mp4" width="100%" controls>
-  Your browser does not support the video tag.
-</video>
+![Sidewalk Navigation Demo 1](demo/demo_1.gif)
 
-<video src="demo/video_2.mp4" width="100%" controls>
-  Your browser does not support the video tag.
-</video>
+![Sidewalk Navigation Demo 2](demo/demo_2.gif)
 
-<video src="demo/video_3.mp4" width="100%" controls>
-  Your browser does not support the video tag.
-</video>
+![Sidewalk Navigation Demo 3](demo/demo_3.gif)
