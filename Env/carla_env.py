@@ -2,7 +2,6 @@ import random
 import queue
 import math
 import yaml
-import argparse
 
 import numpy as np
 import carla
@@ -20,6 +19,7 @@ class CarlaEnv():
         self.world = self.client.get_world()
         self.map = self.world.get_map()
         print('Current map: ', self.map.name)
+        self.spectator = self.world.get_spectator()
         
         # Set synchronous mode
         self.origin_settings = self.world.get_settings()
@@ -150,6 +150,9 @@ class CarlaEnv():
         # Update world
         self.world.tick()
 
+        # Set spectator
+        self.spectator.set_transform(self.rgb_camera.get_transform())
+
         # Initialize task state
         self.collison = False
         self.out_of_map = False
@@ -247,6 +250,9 @@ class CarlaEnv():
             raise ValueError("Invalid action index. Please ensure the correct action.")
 
         self.world.tick()
+
+        # Set spectator
+        self.spectator.set_transform(self.rgb_camera.get_transform())
 
         self.distance = math.sqrt((self.goal_point.x - robot_transform.location.x) ** 2 + (self.goal_point.y - robot_transform.location.y) ** 2)
 
